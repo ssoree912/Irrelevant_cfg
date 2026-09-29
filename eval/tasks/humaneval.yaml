@@ -1,0 +1,40 @@
+task: local_humaneval
+dataset_path: parquet
+dataset_kwargs:
+  data_files:
+    test: DATA_DIR/eval/humaneval/test.parquet
+unsafe_code: true
+output_type: generate_until
+test_split: test
+doc_to_text: "{{prompt}}"
+doc_to_target: "{{test}}\ncheck({{entry_point}})"
+metric_list:
+  - metric: !function local_humaneval_utils.pass_at_k
+    aggregation: mean
+    higher_is_better: true
+    k: [1]
+generation_kwargs:
+  until:
+    - "\nclass"
+    - "\ndef"
+    - "\n#"
+    - "\nif"
+    - "\nprint"
+    # Instruct models close the block with a markdown fence. build_predictions
+    # appends the raw continuation to the prompt and executes it, so a stray
+    # ``` is a SyntaxError and the item scores 0 no matter how good the code is.
+    # Measured on Dream-v0-Instruct-7B: 9/15 completions carried a fence, and
+    # only 6/15 compiled; cutting at the fence takes that to 15/15.
+    - "```"
+  # Every task here decodes one block of 128 tokens in 128 steps.
+  max_gen_toks: 128
+  do_sample: false
+repeats: 1
+num_fewshot: 0
+filter_list:
+  - name: "create_test"
+    filter:
+      - function: "custom"
+        filter_fn: !function local_humaneval_utils.build_predictions
+metadata:
+  version: 1.0
