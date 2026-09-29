@@ -24,7 +24,7 @@ generation_kwargs:
   # Every task here decodes one block of 128 tokens in 128 steps.
   max_gen_toks: 128
   do_sample: false
-num_fewshot: 3
+num_fewshot: 0
 fewshot_config:
   sampler: first_n
   samples: !function local_mbpp_utils.list_fewshot_samples

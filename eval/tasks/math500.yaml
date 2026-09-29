@@ -15,6 +15,7 @@ process_results: !function local_math_utils.process_results
 generation_kwargs:
   until:
     - "Problem:"
+  max_gen_toks: 128
   do_sample: false
   temperature: 0
 metric_list:
@@ -24,7 +25,7 @@ metric_list:
   - metric: math_verify
     aggregation: mean
     higher_is_better: true
-num_fewshot: 4
+num_fewshot: 0
 fewshot_config:
   sampler: first_n
   samples: !function local_math_utils.list_fewshot_samples

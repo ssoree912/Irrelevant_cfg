@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lm-eval run with the single-block, cache-free LLaDA decoder (eval/lm_eval_model.py).
-# Every task generates 128 tokens: one block, 128 steps, one token per step.
+# Every task is 0-shot and generates 128 tokens: one block, 128 steps, one token per step.
 #
 #   scripts/run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|neg_only_norel>
 #
@@ -27,14 +27,15 @@ DATA_DIR="$(cd "${DATA_DIR:-$ROOT/data}" && pwd)"
 OUT_ROOT="${OUT_ROOT:-$ROOT/results}"
 GEN_LENGTH=128
 
-# Same task / shots / chat flags as Future_dLLM's scripts/run_eval.sh.
+# Future_dLLM's task set, all 0-shot. MBPP keeps its chat template; with no shots
+# there is nothing for --fewshot_as_multiturn to split into turns.
 CHAT_ARGS=()
+SHOTS=(--num_fewshot 0)
 case "$DATASET" in
-  gsm8k)     TASK=local_gsm8k; SHOTS=(--num_fewshot 5) ;;
-  math500)   TASK=local_math500; SHOTS=() ;;
-  humaneval) TASK=local_humaneval; SHOTS=() ;;
-  mbpp)      TASK=local_mbpp; SHOTS=(--num_fewshot 3)
-             CHAT_ARGS=(--apply_chat_template --fewshot_as_multiturn) ;;
+  gsm8k)     TASK=local_gsm8k ;;
+  math500)   TASK=local_math500 ;;
+  humaneval) TASK=local_humaneval ;;
+  mbpp)      TASK=local_mbpp; CHAT_ARGS=(--apply_chat_template) ;;
   *) echo "unknown dataset: $DATASET" >&2; exit 1 ;;
 esac
 case "$CONFIG" in

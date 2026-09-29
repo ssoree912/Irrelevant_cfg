@@ -54,7 +54,7 @@ PY=... MODEL_PATH=... DATA_DIR=... GPUS="0 1 2 3" scripts/run_all.sh
 
 각 실행은 GPU마다 샤드 하나가 `generations.jsonl.shard<i>`를 채우고, 이어서 샤드 없이 한 번 더 돌려 전부 재생해 채점합니다.
 
-few-shot / chat 설정은 Future_dLLM `scripts/run_eval.sh`와 같습니다: gsm8k 5-shot, mbpp 3-shot(`--apply_chat_template --fewshot_as_multiturn`), math500·humaneval 0-shot.
+태스크는 Future_dLLM의 local task를 쓰되, 모든 태스크를 0-shot으로 평가합니다(`--num_fewshot 0`, yaml의 `num_fewshot`도 0). chat template은 mbpp에만 적용합니다(`--apply_chat_template`).
 
 ## 테스트
 

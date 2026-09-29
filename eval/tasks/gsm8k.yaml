@@ -28,10 +28,11 @@ generation_kwargs:
     - "Question:"
     - "</s>"
     - "<|im_end|>"
+  max_gen_toks: 128
   do_sample: false
   temperature: 0.0
 repeats: 1
-num_fewshot: 5
+num_fewshot: 0
 filter_list:
   - name: "strict-match"
     filter:
