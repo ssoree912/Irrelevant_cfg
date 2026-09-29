@@ -80,7 +80,9 @@ def template_parts(name, gen_length):
 
 # Fake prefixes tried in order. Tokenizing an anchor on its own would treat its leading
 # whitespace as sequence-initial, so a prefix is prepended and its tokens are dropped.
-_ANCHOR_PREFIXES = (".", "\n", " ")
+# "a" comes last for Qwen-style BPE (Dream), where the first three all merge with a
+# leading newline; it never changes a tokenization an earlier prefix already accepts.
+_ANCHOR_PREFIXES = (".", "\n", " ", "a")
 
 
 def tokenize_anchor(tokenizer, text, device):
@@ -113,7 +115,8 @@ def anchor_spans(tokenizer, parts, prompt_len, gen_length, seq_len, device):
     return spans
 
 
-def build_branches(tokenizer, prompt, gen_length, pos_template, neg_template, device):
+def build_branches(tokenizer, prompt, gen_length, pos_template, neg_template, device,
+                   mask_id=MASK_ID):
     """Initial x_pos / x_neg (prompt + masked response + anchors) and their anchor spans.
 
     Returns (x_pos, x_neg, pos_spans, neg_spans); x_neg and neg_spans are None when
@@ -123,7 +126,7 @@ def build_branches(tokenizer, prompt, gen_length, pos_template, neg_template, de
     prompt_len = prompt.shape[1]
     seq_len = prompt_len + gen_length
 
-    x_pos = torch.full((1, seq_len), MASK_ID, dtype=torch.long, device=device)
+    x_pos = torch.full((1, seq_len), mask_id, dtype=torch.long, device=device)
     x_pos[:, :prompt_len] = prompt
     pos_spans = anchor_spans(tokenizer, template_parts(pos_template, gen_length),
                              prompt_len, gen_length, seq_len, device)

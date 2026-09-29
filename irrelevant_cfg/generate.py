@@ -1,4 +1,4 @@
-"""Single-block, cache-free LLaDA decoding with negative-template CFG.
+"""Single-block, cache-free LLaDA / Dream decoding with negative-template CFG.
 
 The response is one block of ``gen_length`` tokens decoded in ``gen_length`` steps, so
 exactly one token is committed per step. Every step runs a full forward over the whole
@@ -11,6 +11,10 @@ negative's anchor positions. Each step evaluates both and combines
 
 in fp32; the guided logits pick both the token and the confidence that orders unmasking.
 Committed tokens are written into both branches, so the trajectory stays shared.
+
+Dream (``dream=True``) differs only in the forward: full bidirectional attention is
+requested with ``attention_mask="full"`` and its logits are shifted right by one, since
+Dream's position i predicts token i+1.
 """
 
 import numpy as np
@@ -19,6 +23,13 @@ import torch.nn.functional as F
 
 from .sampling import add_gumbel_noise, get_num_transfer_tokens
 from .templates import MASK_ID, build_branches
+
+
+def _logits(model, x, dream):
+    if not dream:
+        return model(x).logits
+    logits = model(x, "full", None).logits
+    return torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
 
 
 @torch.no_grad()
@@ -34,6 +45,8 @@ def generate(
     remasking="low_confidence",
     guidance_scope="all_positive",
     stats=None,
+    mask_id=MASK_ID,
+    dream=False,
 ):
     """Decode ``gen_length`` tokens after ``prompt`` (shape [1, prompt_len]).
 
@@ -44,6 +57,8 @@ def generate(
 
     stats (optional dict) receives the mean EOS probability over masked positions per
     branch ('eos_pos', 'eos_neg'), averaged over steps, to catch a branch collapsing to EOS.
+
+    mask_id / dream: the model's mask token and whether to use Dream's shifted forward.
     """
     if guidance_scope not in ("all_positive", "shared_free"):
         raise ValueError(f"unknown guidance_scope {guidance_scope!r}")
@@ -51,7 +66,8 @@ def generate(
     use_cfg = guidance_scale != 0.0 and neg_template is not None
 
     x, x_neg, pos_spans, neg_spans = build_branches(
-        tokenizer, prompt, gen_length, pos_template, neg_template if use_cfg else None, device)
+        tokenizer, prompt, gen_length, pos_template, neg_template if use_cfg else None, device,
+        mask_id=mask_id)
     prompt_len = prompt.shape[1]
 
     # The negative's anchors must survive commits: without a positive template those
@@ -73,17 +89,17 @@ def generate(
     # Single block covering the whole response; one step per token.
     steps = gen_length
     block_end = x.shape[1]
-    num_transfer_tokens = get_num_transfer_tokens(x[:, prompt_len:block_end] == MASK_ID, steps)
+    num_transfer_tokens = get_num_transfer_tokens(x[:, prompt_len:block_end] == mask_id, steps)
 
     for step in range(steps):
-        mask_index = (x == MASK_ID)
+        mask_index = (x == mask_id)
         if mask_index.sum() == 0:
             break
 
         if use_cfg:
             # Sequential batch-1 forwards: batch-2 packing is not bit-identical on cuBLAS.
-            logits_pos = model(x).logits
-            logits_neg = model(x_neg).logits
+            logits_pos = _logits(model, x, dream)
+            logits_neg = _logits(model, x_neg, dream)
             w = guidance_scale
             logits = ((1.0 + w) * logits_pos.float() - w * logits_neg.float()).to(logits_pos.dtype)
             if guidance_scope == "shared_free":
@@ -97,7 +113,7 @@ def generate(
                     eos_neg_acc += p_neg[m].mean().item()
                     n_stat_steps += 1
         else:
-            logits = model(x).logits
+            logits = _logits(model, x, dream)
             if stats is not None:
                 p_pos = F.softmax(logits.float(), dim=-1)[0, :, eos_id]
                 m = mask_index[0]

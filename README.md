@@ -1,6 +1,6 @@
 # Irrelevant_cfg
 
-LLaDA-8B-Instruct에 **negative-template CFG**를 적용합니다. 정답과 무관한 구조의 템플릿(`no_relevance`, 서사 구조)을 negative branch에 두고, 매 스텝 아래처럼 logits를 섞습니다.
+LLaDA-8B-Instruct / Dream-v0-Instruct-7B에 **negative-template CFG**를 적용합니다. 정답과 무관한 구조의 템플릿(`no_relevance`, 서사 구조)을 negative branch에 두고, 매 스텝 아래처럼 logits를 섞습니다.
 
     L_guided = (1 + w) * L_pos - w * L_neg        (fp32로 계산, w = 1.0)
 
@@ -42,8 +42,17 @@ PY=/path/to/python scripts/run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|n
 - `vanilla`: CFG 없이 기본 LLaDA 디코딩
 - `neg_only_norel`: negative = `no_relevance`, w = 1.0
 
-환경 변수: `MODEL_PATH`, `DATA_DIR`(기본은 `data` 심볼릭 링크), `LIMIT`, `OUT_ROOT`.
-결과는 `results/<dataset>/<config>_len128/`에 저장됩니다. 생성 결과는 `generations.jsonl`에 한 줄씩 기록되므로, 같은 명령을 다시 실행하면 이어서 돌아갑니다.
+환경 변수: `MODEL_PATH`, `DATA_DIR`(기본은 `data` 심볼릭 링크), `LIMIT`, `OUT_ROOT`, `SHARD`.
+모델 종류(LLaDA / Dream)는 체크포인트 config에서 읽습니다. Dream은 mask id 151666, `attention_mask="full"`, 한 칸 shift한 logits를 씁니다.
+결과는 `results/<model>/<dataset>/<config>_len128/`에 저장됩니다. 생성 결과는 `generations.jsonl`에 한 줄씩 기록되므로, 같은 명령을 다시 실행하면 이어서 돌아갑니다.
+
+전체 데이터셋 x config를 짧은 벤치마크부터(humaneval → math500 → mbpp → gsm8k) GPU 여러 장에 샤딩해 돌리려면:
+
+```bash
+PY=... MODEL_PATH=... DATA_DIR=... GPUS="0 1 2 3" scripts/run_all.sh
+```
+
+각 실행은 GPU마다 샤드 하나가 `generations.jsonl.shard<i>`를 채우고, 이어서 샤드 없이 한 번 더 돌려 전부 재생해 채점합니다.
 
 few-shot / chat 설정은 Future_dLLM `scripts/run_eval.sh`와 같습니다: gsm8k 5-shot, mbpp 3-shot(`--apply_chat_template --fewshot_as_multiturn`), math500·humaneval 0-shot.
 

@@ -5,11 +5,13 @@
 #   scripts/run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|neg_only_norel>
 #
 # Env:
-#   MODEL_PATH  LLaDA-8B-Instruct directory
+#   MODEL_PATH  LLaDA-8B-Instruct or Dream-v0-Instruct-7B directory
 #   DATA_DIR    parquet root in Future_dLLM's data/ layout (default: <repo>/data symlink)
 #   PY          python interpreter with lm-eval 0.4.x (default: python)
 #   LIMIT       evaluate only the first LIMIT examples
 #   OUT_ROOT    results root (default: <repo>/results)
+#   SHARD       "i/n": decode only every n-th request into the shared generations.jsonl
+#               and skip scoring; run n shards, then once without SHARD to score
 #
 # Generations are appended to <out>/generations.jsonl as they finish; rerunning the
 # same command resumes from there.
@@ -40,7 +42,8 @@ case "$CONFIG" in
   *) echo "unknown config: $CONFIG" >&2; exit 1 ;;
 esac
 
-OUT="$OUT_ROOT/$DATASET/${CONFIG}_len${GEN_LENGTH}${LIMIT:+_limit$LIMIT}"
+MODEL_TAG="$(basename "$MODEL_PATH")"
+OUT="$OUT_ROOT/$MODEL_TAG/$DATASET/${CONFIG}_len${GEN_LENGTH}${LIMIT:+_limit$LIMIT}"
 TASKS_DIR="$OUT/tasks"
 mkdir -p "$TASKS_DIR"
 cp "$ROOT"/eval/tasks/local_*.py "$TASKS_DIR/"
@@ -50,11 +53,15 @@ done
 
 export LLADA_CFG_STORE="$OUT/generations.jsonl"
 export TOKENIZERS_PARALLELISM=false HF_ALLOW_CODE_EVAL=1
+export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}" TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+export LLADA_CFG_SHARD="${SHARD:-0/1}"
+RUN_OUT="$OUT/out"
+[ -n "${SHARD:-}" ] && RUN_OUT="$OUT/shard_out/${SHARD%/*}"
 
 LIMIT_ARGS=()
 [ -n "${LIMIT:-}" ] && LIMIT_ARGS=(--limit "$LIMIT")
 
-echo "$DATASET config=$CONFIG gen_length=$GEN_LENGTH samples=${LIMIT:-all} -> $OUT"
+echo "$MODEL_TAG $DATASET config=$CONFIG gen_length=$GEN_LENGTH samples=${LIMIT:-all} shard=${SHARD:-none} -> $OUT"
 cd "$ROOT"
 "$PY" eval/lm_eval_model.py \
   --model LLaDA_cfg \
@@ -66,4 +73,4 @@ cd "$ROOT"
   --log_samples \
   "${LIMIT_ARGS[@]}" \
   "${CHAT_ARGS[@]}" \
-  --output_path "$OUT/out"
+  --output_path "$RUN_OUT"
