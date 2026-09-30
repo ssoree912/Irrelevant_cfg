@@ -11,6 +11,9 @@
 #   MODEL_PATH  LLaDA-8B-Instruct or Dream-v0-Instruct-7B directory
 #   DATA_DIR    parquet root in Future_dLLM's data/ layout (default: <repo>/data symlink)
 #   TI_DATA_DIR parquet root for the ti_* tasks (default: <repo>/data_ti)
+#   LONGBENCH_DATA  LongBench jsonl dir for longbench_* (default: $DATA_DIR/longbench/data)
+#   MAX_SEQ_LEN prompt + generation budget; prompts are left-truncated to MAX_SEQ_LEN - 128
+#               (default 4096; other values tag the dir _msl<N>)
 #   PY          python interpreter with lm-eval 0.4.x (default: python)
 #   LIMIT       evaluate only the first LIMIT examples
 #   OUT_ROOT    results root (default: <repo>/results)
@@ -43,6 +46,7 @@ case "$DATASET" in
   humaneval) TASK=local_humaneval ;;
   mbpp)      TASK=local_mbpp; CHAT_ARGS=(--apply_chat_template) ;;
   ti_gsm8k|ti_math500|ti_humaneval) TASK="$DATASET" ;;
+  longbench_*) TASK="$DATASET" ;;
   *) echo "unknown dataset: $DATASET" >&2; exit 1 ;;
 esac
 case "$CONFIG" in
@@ -68,12 +72,25 @@ if [ "$CONFIG" != vanilla ] && [ "$W" != 1.0 ]; then
   DECODE_ARGS="$DECODE_ARGS,w=$W"
 fi
 [[ "$DATASET" == ti_* ]] && DECODE_ARGS="$DECODE_ARGS,postprocess=ti"
+MAX_SEQ_LEN="${MAX_SEQ_LEN:-4096}"
+MSL_TAG=""
+if [ "$MAX_SEQ_LEN" != 4096 ]; then
+  MSL_TAG="_msl$MAX_SEQ_LEN"
+  DECODE_ARGS="$DECODE_ARGS,max_seq_len=$MAX_SEQ_LEN"
+fi
 MODEL_TAG="$(basename "$MODEL_PATH")"
-OUT="$OUT_ROOT/$MODEL_TAG/$DATASET/${CONFIG}_len${GEN_LENGTH}${DECODE_TAG}${W_TAG}${LIMIT:+_limit$LIMIT}"
+OUT="$OUT_ROOT/$MODEL_TAG/$DATASET/${CONFIG}_len${GEN_LENGTH}${DECODE_TAG}${W_TAG}${MSL_TAG}${LIMIT:+_limit$LIMIT}"
 # Shards launched together each get their own copy, so concurrent cp/sed never race.
 TASKS_DIR="$OUT/tasks${SHARD:+_shard${SHARD%/*}}"
 mkdir -p "$TASKS_DIR"
-if [[ "$DATASET" == ti_* ]]; then
+if [[ "$DATASET" == longbench_* ]]; then
+  DATA_DIR_LB="${DATA_DIR:-$ROOT/data}"
+  LONGBENCH_DATA="$(cd "${LONGBENCH_DATA:-$DATA_DIR_LB/longbench/data}" && pwd)"
+  cp "$ROOT"/eval/tasks_longbench/metrics.py "$TASKS_DIR/"
+  for y in "$ROOT"/eval/tasks_longbench/*.yaml; do
+    sed "s|LONGBENCH_DATA_DIR|$LONGBENCH_DATA|" "$y" > "$TASKS_DIR/$(basename "$y")"
+  done
+elif [[ "$DATASET" == ti_* ]]; then
   TI_DATA_DIR="$(cd "${TI_DATA_DIR:-$ROOT/data_ti}" && pwd)"
   cp "$ROOT"/eval/tasks_ti/ti_*.py "$TASKS_DIR/"
   for y in "$ROOT"/eval/tasks_ti/*.yaml; do

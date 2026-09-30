@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 OC_PYTHON="${OC_PYTHON:-/workspace/dllm/oc/ocenv/bin/python}"
 export COMPASS_DATA_CACHE="${COMPASS_DATA_CACHE:-/workspace/dllm/oc}"
-export MODEL_PATH="${MODEL_PATH:?set MODEL_PATH to the Dream checkpoint}"
+export MODEL_PATH="${MODEL_PATH:-}"   # only for configs that leave path empty
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 # nltk -> sqlite3 needs a newer libstdc++ than the system one.
 export LD_LIBRARY_PATH="/opt/conda/envs/future-dllm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

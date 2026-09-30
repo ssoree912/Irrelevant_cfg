@@ -65,6 +65,8 @@ class LLaDACFG(HFLM):
             self._decode_tag += f":post-{self._postprocess}"
         if self._neg is not None and self._w != 1.0:
             self._decode_tag += f":w{self._w}"
+        if self._max_seq_len != 4096:
+            self._decode_tag += f":msl{self._max_seq_len}"
         model = AutoModel.from_pretrained(str(pretrained), trust_remote_code=True,
                                           torch_dtype=torch.bfloat16).to("cuda").eval()
         self._dream = model.config.model_type.lower() == "dream"
