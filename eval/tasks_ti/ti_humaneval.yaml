@@ -1,0 +1,36 @@
+# Template-Infilling's humaneval_instruct (third_party/lm_eval/tasks/humaneval/
+# humaneval_instruct.yaml on top of humaneval.yaml), local parquet.
+task: ti_humaneval
+dataset_path: parquet
+dataset_kwargs:
+  data_files:
+    test: TI_DATA_DIR/humaneval/test.parquet
+unsafe_code: true
+output_type: generate_until
+test_split: test
+doc_to_text: "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{{ prompt }}\n```\n"
+gen_prefix: "Here is the completed function:\n```python\n{{ prompt }}\n"
+doc_to_target: "{{test}}\ncheck({{entry_point}})"
+metric_list:
+  - metric: !function ti_humaneval_utils.pass_at_k
+    aggregation: mean
+    higher_is_better: true
+    k: [1]
+generation_kwargs:
+  until:
+    - "\nclass"
+    - "\ndef"
+    - "\n#"
+    - "\nif"
+    - "\nprint"
+  max_gen_toks: 128
+  do_sample: false
+repeats: 1
+num_fewshot: 0
+filter_list:
+  - name: "create_test"
+    filter:
+      - function: "custom"
+        filter_fn: !function ti_humaneval_utils.build_predictions_instruct
+metadata:
+  version: 4.0

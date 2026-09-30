@@ -33,6 +33,15 @@ def _no_relevance_parts(gen_length):
     }
 
 
+def _no_relevance_notail_parts(gen_length):
+    # no_relevance without the pinned answer anchor: nothing in the negative sits where the
+    # final answer is written, so the guidance there does not push against answering.
+    return {
+        0: "Let me introduce the main characters\n",
+        gen_length // 4: "\nMoving on to the setting of the story:\n",
+    }
+
+
 def _no_relevance_code_parts(gen_length):
     # Same manipulation with a code structure instead of a narrative one.
     return {
@@ -63,6 +72,7 @@ def _neutral_parts(gen_length):
 TEMPLATES = {
     "math_template1": _good_parts,
     "no_relevance": _no_relevance_parts,
+    "no_relevance_notail": _no_relevance_notail_parts,
     "no_relevance_code": _no_relevance_code_parts,
     "no_coherence": _no_coherence_parts,
     "neutral_pinned": _neutral_parts,

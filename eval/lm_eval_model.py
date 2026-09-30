@@ -33,13 +33,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from irrelevant_cfg import MASK_ID, generate, set_seed  # noqa: E402
 
 # config name -> negative template (None = vanilla decoding)
-CONFIGS = {"vanilla": None, "neg_only_norel": "no_relevance"}
+CONFIGS = {"vanilla": None, "neg_only_norel": "no_relevance",
+           "neg_only_norel_notail": "no_relevance_notail"}
 
 
 @register_model("LLaDA_cfg")
 class LLaDACFG(HFLM):
     def __init__(self, pretrained, config="vanilla", gen_length=128, max_seq_len=4096,
-                 w=1.0, seed=1234, **kwargs):
+                 w=1.0, seed=1234, sampler="llada", temperature=0.0, top_p=1.0, alg="entropy",
+                 postprocess="default", **kwargs):
         from transformers import AutoModel
         if config not in CONFIGS:
             raise ValueError(f"config must be one of {sorted(CONFIGS)}")
@@ -49,6 +51,20 @@ class LLaDACFG(HFLM):
         self._max_seq_len = int(max_seq_len)
         self._w = float(w)
         self._seed = int(seed)
+        self._sampler = str(sampler)
+        self._temperature = float(temperature)
+        self._top_p = float(top_p)
+        self._alg = str(alg)
+        if postprocess not in ("default", "ti"):
+            raise ValueError("postprocess must be 'default' or 'ti'")
+        self._postprocess = postprocess
+        # Resume key suffix; the LLaDA sampler keeps the original (empty) suffix.
+        self._decode_tag = ("" if self._sampler == "llada" else
+                            f"{self._sampler}:{self._alg}:{self._temperature}:{self._top_p}")
+        if self._postprocess != "default":
+            self._decode_tag += f":post-{self._postprocess}"
+        if self._neg is not None and self._w != 1.0:
+            self._decode_tag += f":w{self._w}"
         model = AutoModel.from_pretrained(str(pretrained), trust_remote_code=True,
                                           torch_dtype=torch.bfloat16).to("cuda").eval()
         self._dream = model.config.model_type.lower() == "dream"
@@ -59,7 +75,9 @@ class LLaDACFG(HFLM):
         super().__init__(pretrained=model, **kwargs)
         print(f"[LLaDA_cfg] config={config} neg={self._neg} w={self._w} "
               f"gen_length=steps=block_length={self._gen_length} cache=off "
-              f"family={'dream' if self._dream else 'llada'} mask_id={self._mask_id}", flush=True)
+              f"family={'dream' if self._dream else 'llada'} mask_id={self._mask_id} "
+              f"sampler={self._sampler} alg={self._alg} temperature={self._temperature} "
+              f"top_p={self._top_p} seed={self._seed} postprocess={self._postprocess}", flush=True)
 
     def loglikelihood(self, requests, disable_tqdm=False):
         raise NotImplementedError
@@ -94,7 +112,8 @@ class LLaDACFG(HFLM):
                             desc=f"LLaDA_cfg {self._cfg_name} shard {shard}/{n_shards}")):
             context, raw_kwargs = request.args
             request_body = context + repr(sorted(raw_kwargs.items()))
-            key = hashlib.md5((request_body + self._cfg_name + str(self._gen_length)).encode()).hexdigest()
+            key = hashlib.md5((request_body + self._cfg_name + str(self._gen_length)
+                                  + self._decode_tag).encode()).hexdigest()
             if key in done:
                 results.append(done[key])
                 continue
@@ -111,17 +130,32 @@ class LLaDACFG(HFLM):
             stats = {}
             started = time.perf_counter()
             out = generate(self.model, self.tokenizer, prompt, gen_length=self._gen_length,
-                           neg_template=self._neg, guidance_scale=self._w, temperature=0.0,
+                           neg_template=self._neg, guidance_scale=self._w,
+                           temperature=self._temperature if self._sampler == "dream" else 0.0,
                            guidance_scope="all_positive", stats=stats,
-                           mask_id=self._mask_id, dream=self._dream)
+                           mask_id=self._mask_id, dream=self._dream, sampler=self._sampler,
+                           top_p=self._top_p, alg=self._alg)
             seconds = time.perf_counter() - started
             tokens = out[0, prompt.shape[1]:].tolist()
             assert len(tokens) == self._gen_length and self._mask_id not in tokens
             raw_text = self.tokenizer.decode(tokens, skip_special_tokens=True)
-            text = raw_text
-            for term in raw_kwargs.get("until") or []:
-                if term:
-                    text = text.split(term)[0]
+            if self._postprocess == "ti":
+                # Template-Infilling's ours_dream_verify: cut at the first EOS, apply the stop
+                # strings with special tokens still in the text, then drop them.
+                eos = self.tokenizer.eos_token_id
+                kept = tokens[:tokens.index(eos)] if eos in tokens else tokens
+                text = self.tokenizer.decode(kept, skip_special_tokens=False)
+                for term in raw_kwargs.get("until") or []:
+                    if term and term in text:
+                        text = text.split(term)[0]
+                text = self.tokenizer.decode(
+                    self.tokenizer(text, add_special_tokens=False)["input_ids"],
+                    skip_special_tokens=True)
+            else:
+                text = raw_text
+                for term in raw_kwargs.get("until") or []:
+                    if term:
+                        text = text.split(term)[0]
             results.append(text)
             if store is not None:
                 store.write(json.dumps({"key": key, "doc_id": request.doc_id, "text": text,

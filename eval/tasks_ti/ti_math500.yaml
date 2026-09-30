@@ -1,0 +1,47 @@
+# Template-Infilling's hendrycks_math500 (third_party/lm_eval/tasks/hendrycks_math/
+# hendrycks_math500.yaml + hendrycks_math_algebra.yaml), local parquet. TI's task dir also
+# has a "hendrycks_math copy" variant without filter_list, but lm-eval walks directories in
+# sorted order and keeps the first registration, so this filtered one is what TI ran.
+task: ti_math500
+dataset_path: parquet
+dataset_kwargs:
+  data_files:
+    test: TI_DATA_DIR/math500/test.parquet
+process_docs: !function ti_math_utils.process_docs
+output_type: generate_until
+test_split: test
+doc_to_text: "Problem: {{problem}}\nAnswer:"
+process_results: !function ti_math_utils.process_results
+doc_to_target: "{{answer}}"
+generation_kwargs:
+  until:
+    - "Problem:"
+  max_gen_toks: 128
+  do_sample: false
+  temperature: 0
+num_fewshot: 0
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: false
+    regexes_to_ignore:
+      - ","
+      - "\\$"
+      - "(?s).*#### "
+      - "\\.$"
+filter_list:
+  - name: "strict-match"
+    filter:
+      - function: "regex"
+        regex_pattern: "#### (\\-?[0-9\\.\\,]+)"
+      - function: "take_first"
+  - name: "flexible-extract"
+    filter:
+      - function: "regex"
+        group_select: -1
+        regex_pattern: "(-?[$0-9.,]{2,})|(-?[0-9]+)"
+      - function: "take_first"
+metadata:
+  version: 1.0
