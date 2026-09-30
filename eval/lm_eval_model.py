@@ -32,6 +32,13 @@ from lm_eval.models.huggingface import HFLM
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from irrelevant_cfg import MASK_ID, generate, set_seed  # noqa: E402
 
+# Per-family decoding defaults, used for any of sampler / alg / temperature / top_p / w
+# not given in model_args.
+FAMILY_DEFAULTS = {
+    "dream": dict(sampler="dream", alg="entropy", temperature=0.2, top_p=0.95, w=0.5),
+    "llada": dict(sampler="llada", alg="entropy", temperature=0.0, top_p=1.0, w=1.0),
+}
+
 # config name -> negative template (None = vanilla decoding)
 CONFIGS = {"vanilla": None, "neg_only_norel": "no_relevance",
            "neg_only_norel_notail": "no_relevance_notail"}
@@ -40,7 +47,7 @@ CONFIGS = {"vanilla": None, "neg_only_norel": "no_relevance",
 @register_model("LLaDA_cfg")
 class LLaDACFG(HFLM):
     def __init__(self, pretrained, config="vanilla", gen_length=128, max_seq_len=4096,
-                 w=1.0, seed=1234, sampler="llada", temperature=0.0, top_p=1.0, alg="entropy",
+                 w=None, seed=1234, sampler=None, temperature=None, top_p=None, alg=None,
                  postprocess="default", **kwargs):
         from transformers import AutoModel
         if config not in CONFIGS:
@@ -49,12 +56,17 @@ class LLaDACFG(HFLM):
         self._cfg_name = config
         self._gen_length = int(gen_length)
         self._max_seq_len = int(max_seq_len)
-        self._w = float(w)
         self._seed = int(seed)
-        self._sampler = str(sampler)
-        self._temperature = float(temperature)
-        self._top_p = float(top_p)
-        self._alg = str(alg)
+        model = AutoModel.from_pretrained(str(pretrained), trust_remote_code=True,
+                                          torch_dtype=torch.bfloat16).to("cuda").eval()
+        self._dream = model.config.model_type.lower() == "dream"
+        self._mask_id = int(model.config.mask_token_id) if self._dream else MASK_ID
+        d = FAMILY_DEFAULTS["dream" if self._dream else "llada"]
+        self._w = float(d["w"] if w is None else w)
+        self._sampler = str(d["sampler"] if sampler is None else sampler)
+        self._temperature = float(d["temperature"] if temperature is None else temperature)
+        self._top_p = float(d["top_p"] if top_p is None else top_p)
+        self._alg = str(d["alg"] if alg is None else alg)
         if postprocess not in ("default", "ti"):
             raise ValueError("postprocess must be 'default' or 'ti'")
         self._postprocess = postprocess
@@ -67,10 +79,6 @@ class LLaDACFG(HFLM):
             self._decode_tag += f":w{self._w}"
         if self._max_seq_len != 4096:
             self._decode_tag += f":msl{self._max_seq_len}"
-        model = AutoModel.from_pretrained(str(pretrained), trust_remote_code=True,
-                                          torch_dtype=torch.bfloat16).to("cuda").eval()
-        self._dream = model.config.model_type.lower() == "dream"
-        self._mask_id = int(model.config.mask_token_id) if self._dream else MASK_ID
         kwargs.setdefault("tokenizer", str(pretrained))
         kwargs.setdefault("batch_size", 1)
         kwargs.setdefault("trust_remote_code", True)

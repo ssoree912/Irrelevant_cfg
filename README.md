@@ -13,7 +13,7 @@ positive branch에는 앵커가 없습니다(negative-only CFG). 두 branch는 �
 | gen length | 128 |
 | block | 단일 블록 (block_length = 128) |
 | steps | 128 (스텝당 1토큰 확정) |
-| remasking | 기본: low_confidence, temperature 0 (`DECODING=dream`이면 Dream sampler, 아래 참고) |
+| 디코딩 기본값 | LLaDA: low_confidence, temperature 0, CFG w = 1.0 / Dream: entropy, temperature 0.2, top_p 0.95, CFG w = 0.5 (체크포인트 config로 구분) |
 | cache | 사용 안 함 (매 스텝 전체 시퀀스 forward) |
 
 태스크 yaml의 `max_gen_toks`와 관계없이 항상 128 토큰을 생성합니다.
@@ -53,10 +53,12 @@ humaneval_instruct와 프롬프트·채점이 같고, TI의 후처리 `postproce
 `longbench_<task>` (데이터는 `LONGBENCH_DATA`, 기본 `$DATA_DIR/longbench/data`).
 `MAX_SEQ_LEN`(기본 4096)으로 프롬프트 + 생성 길이를 제한합니다(프롬프트는 왼쪽부터 잘림).
 
-디코딩: `DECODING=llada`(기본, low_confidence, temperature 0) 또는 `DECODING=dream`
-(Dream `sample_tokens`와 같은 sampler: `DREAM_ALG=entropy|maskgit_plus|origin`,
-`DREAM_TEMPERATURE`, `DREAM_TOP_P`, 기본 entropy / 0.2 / 0.95). `origin`은 Dream `_sample`처럼
-매 스텝 각 마스크 위치를 확률 1 - s/t로 확정합니다(TI의 vanilla 디코딩). CFG 세기는 `W`.
+디코딩: 기본값은 모델 종류를 따릅니다. LLaDA는 `DECODING=llada`(low_confidence,
+temperature 0), Dream은 `DECODING=dream`(Dream `sample_tokens`와 같은 sampler:
+`DREAM_ALG=entropy|maskgit_plus|origin`, `DREAM_TEMPERATURE`, `DREAM_TOP_P`, 기본 entropy / 0.2 /
+0.95). `origin`은 Dream `_sample`처럼 매 스텝 각 마스크 위치를 확률 1 - s/t로 확정합니다(TI의
+vanilla 디코딩). CFG 세기 `W`의 기본값은 LLaDA 1.0, Dream 0.5입니다. lm-eval / OpenCompass 모델에서
+생략한 인자도 같은 기본값(`FAMILY_DEFAULTS`)을 씁니다.
 
 환경 변수: `MODEL_PATH`, `DATA_DIR`(기본은 `data` 심볼릭 링크), `TI_DATA_DIR`(기본 `data_ti`), `LIMIT`, `OUT_ROOT`, `SHARD`, `DECODING`, `DREAM_*`, `W`.
 모델 종류(LLaDA / Dream)는 체크포인트 config에서 읽습니다. Dream은 mask id 151666, `attention_mask="full"`, 한 칸 shift한 logits를 씁니다.

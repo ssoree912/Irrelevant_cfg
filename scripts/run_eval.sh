@@ -17,9 +17,11 @@
 #   PY          python interpreter with lm-eval 0.4.x (default: python)
 #   LIMIT       evaluate only the first LIMIT examples
 #   OUT_ROOT    results root (default: <repo>/results)
-#   DECODING    llada (default: greedy, low_confidence) or dream (Dream's sampler with
-#               DREAM_ALG=entropy, DREAM_TEMPERATURE=0.2, DREAM_TOP_P=0.95)
-#   W           guidance scale for neg_only_norel (default 1.0; other values tag the dir _w<W>)
+#   DECODING    llada (greedy, low_confidence) or dream (Dream's sampler with
+#               DREAM_ALG / DREAM_TEMPERATURE / DREAM_TOP_P, default entropy / 0.2 / 0.95);
+#               default: dream for a Dream checkpoint, llada otherwise
+#   W           CFG guidance scale (default 0.5 for Dream, 1.0 for LLaDA; values other than
+#               1.0 tag the dir _w<W>)
 #   SHARD       "i/n": decode only every n-th request into the shared generations.jsonl
 #               and skip scoring; run n shards, then once without SHARD to score
 #
@@ -54,22 +56,28 @@ case "$CONFIG" in
   *) echo "unknown config: $CONFIG" >&2; exit 1 ;;
 esac
 
-DECODING="${DECODING:-llada}"
+# Family defaults (same as FAMILY_DEFAULTS in eval/lm_eval_model.py), read off the checkpoint.
+if grep -qiE '"model_type": *"dream"' "$MODEL_PATH/config.json" 2>/dev/null; then
+  FAMILY=dream; DEFAULT_W=0.5
+else
+  FAMILY=llada; DEFAULT_W=1.0
+fi
+DECODING="${DECODING:-$FAMILY}"
 DECODE_ARGS=""
 DECODE_TAG=""
 case "$DECODING" in
-  llada) ;;
+  llada) DECODE_ARGS=",sampler=llada" ;;
   dream) DREAM_ALG="${DREAM_ALG:-entropy}" DREAM_TEMPERATURE="${DREAM_TEMPERATURE:-0.2}"
          DREAM_TOP_P="${DREAM_TOP_P:-0.95}"
          DECODE_ARGS=",sampler=dream,alg=$DREAM_ALG,temperature=$DREAM_TEMPERATURE,top_p=$DREAM_TOP_P"
          DECODE_TAG="_dream_${DREAM_ALG}_t${DREAM_TEMPERATURE}_p${DREAM_TOP_P}" ;;
   *) echo "unknown decoding: $DECODING" >&2; exit 1 ;;
 esac
-W="${W:-1.0}"
+W="${W:-$DEFAULT_W}"
 W_TAG=""
-if [ "$CONFIG" != vanilla ] && [ "$W" != 1.0 ]; then
-  W_TAG="_w$W"
-  DECODE_ARGS="$DECODE_ARGS,w=$W"
+if [ "$CONFIG" != vanilla ]; then
+  DECODE_ARGS="$DECODE_ARGS,w=$W"   # always explicit: the model's own default depends on the family
+  [ "$W" != 1.0 ] && W_TAG="_w$W"
 fi
 [[ "$DATASET" == ti_* ]] && DECODE_ARGS="$DECODE_ARGS,postprocess=ti"
 MAX_SEQ_LEN="${MAX_SEQ_LEN:-4096}"
