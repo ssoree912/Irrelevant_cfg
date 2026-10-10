@@ -7,10 +7,16 @@ sequence (no KV / prefix / future cache).
 With a negative template, two branches share one decoding state and differ only at the
 negative's anchor positions. Each step evaluates both and combines
 
-    L_guided = (1 + w) * L_pos - w * L_neg
+    L_guided = (1 + w) * L_pos - w * L_neg                  (combine="cfg")
+    L_guided = L_pos - w * L_neg                            (combine="id")
 
 in fp32; the guided logits pick both the token and the confidence that orders unmasking.
 Committed tokens are written into both branches, so the trajectory stays shared.
+combine="id" is Instructive Decoding's z - eps * z~ (arXiv:2311.00233, w plays eps).
+
+A negative prompt (``neg_prompt``, e.g. a noisy instruction as in Instructive Decoding)
+replaces the prompt in the negative branch, alone or together with a negative template.
+Its length may differ from the prompt's; the branches are aligned on response offsets.
 
 Dream (``dream=True``) differs only in the forward: full bidirectional attention is
 requested with ``attention_mask="full"`` and its logits are shifted right by one, since
@@ -92,10 +98,14 @@ def generate(
     top_p=None,
     alg="entropy",
     eps=1e-3,
+    neg_prompt=None,
+    combine="cfg",
 ):
     """Decode ``gen_length`` tokens after ``prompt`` (shape [1, prompt_len]).
 
-    neg_template None or guidance_scale 0 is plain LLaDA decoding (one forward per step).
+    neg_template and neg_prompt both None, or guidance_scale 0, is plain LLaDA decoding
+    (one forward per step). neg_prompt ([1, neg_prompt_len]) is the negative branch's prompt;
+    combine "cfg" or "id" picks the formula in the module docstring.
 
     guidance_scope: "all_positive" guides every response position; "shared_free" keeps
     the positive logits at the negative's anchor positions.
@@ -112,13 +122,17 @@ def generate(
         raise ValueError(f"unknown sampler {sampler!r}")
     if guidance_scope not in ("all_positive", "shared_free"):
         raise ValueError(f"unknown guidance_scope {guidance_scope!r}")
+    if combine not in ("cfg", "id"):
+        raise ValueError(f"unknown combine {combine!r}")
     device = model.device
-    use_cfg = guidance_scale != 0.0 and neg_template is not None
+    use_cfg = guidance_scale != 0.0 and (neg_template is not None or neg_prompt is not None)
 
     x, x_neg, pos_spans, neg_spans = build_branches(
         tokenizer, prompt, gen_length, pos_template, neg_template if use_cfg else None, device,
-        mask_id=mask_id)
+        mask_id=mask_id, neg_prompt=neg_prompt if use_cfg else None)
     prompt_len = prompt.shape[1]
+    # Response offset r is x[:, prompt_len + r] and x_neg[:, neg_prompt_len + r].
+    neg_prompt_len = x_neg.shape[1] - gen_length if use_cfg else prompt_len
 
     # The negative's anchors must survive commits: without a positive template those
     # positions are free masks in x, and copying x's commits over them would make the
@@ -127,11 +141,11 @@ def generate(
     guidance_positions = torch.ones_like(x, dtype=torch.bool)
     guidance_positions[:, :prompt_len] = False
     if use_cfg:
-        neg_protect = torch.zeros(x.shape, dtype=torch.bool, device=device)
+        neg_protect = torch.zeros(x_neg.shape, dtype=torch.bool, device=device)
         for start, end, _ in neg_spans:
             neg_protect[:, start:end] = True
         if guidance_scope == "shared_free":
-            guidance_positions &= ~neg_protect
+            guidance_positions[:, prompt_len:] &= ~neg_protect[:, neg_prompt_len:]
 
     eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else tokenizer.pad_token_id
     eos_pos_acc, eos_neg_acc, n_stat_steps = 0.0, 0.0, 0
@@ -151,9 +165,12 @@ def generate(
         if use_cfg:
             # Sequential batch-1 forwards: batch-2 packing is not bit-identical on cuBLAS.
             logits_pos = _logits(model, x, dream)
-            logits_neg = _logits(model, x_neg, dream)
+            # Negative logits on x's positions: response aligned by offset, prompt unused.
+            logits_neg = logits_pos.clone()
+            logits_neg[:, prompt_len:] = _logits(model, x_neg, dream)[:, neg_prompt_len:]
             w = guidance_scale
-            logits = ((1.0 + w) * logits_pos.float() - w * logits_neg.float()).to(logits_pos.dtype)
+            pos_scale = 1.0 + w if combine == "cfg" else 1.0
+            logits = (pos_scale * logits_pos.float() - w * logits_neg.float()).to(logits_pos.dtype)
             if guidance_scope == "shared_free":
                 logits = torch.where(guidance_positions.unsqueeze(-1), logits, logits_pos)
             if stats is not None:
@@ -218,15 +235,17 @@ def generate(
 
         x[transfer_index] = x0[transfer_index]
         if use_cfg:
-            neg_transfer = transfer_index & ~neg_protect
-            x_neg[neg_transfer] = x0[neg_transfer]
+            neg_transfer = transfer_index[:, prompt_len:] & ~neg_protect[:, neg_prompt_len:]
+            x_neg[:, neg_prompt_len:][neg_transfer] = x0[:, prompt_len:][neg_transfer]
 
     if use_cfg:
-        # Invariant: the branches differ only inside anchor spans.
-        allowed = [(s, e) for s, e, _ in pos_spans] + [(s, e) for s, e, _ in neg_spans]
-        for _, pos in (x != x_neg).nonzero().tolist():
-            if not any(s <= pos < e for s, e in allowed):
-                raise RuntimeError(f"branches diverged outside anchor spans at position {pos}")
+        # Invariant: the responses differ only inside anchor spans.
+        allowed = ([(s - prompt_len, e - prompt_len) for s, e, _ in pos_spans]
+                   + [(s - neg_prompt_len, e - neg_prompt_len) for s, e, _ in neg_spans])
+        diff = x[:, prompt_len:] != x_neg[:, neg_prompt_len:]
+        for _, off in diff.nonzero().tolist():
+            if not any(s <= off < e for s, e in allowed):
+                raise RuntimeError(f"branches diverged outside anchor spans at offset {off}")
 
     if stats is not None:
         if n_stat_steps:

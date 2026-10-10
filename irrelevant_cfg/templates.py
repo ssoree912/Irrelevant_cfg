@@ -42,6 +42,18 @@ def _no_relevance_notail_parts(gen_length):
     }
 
 
+def _no_relevance_notail3_parts(gen_length):
+    # no_relevance_notail plus a third story anchor at L/2, still clear of the answer.
+    parts = _no_relevance_notail_parts(gen_length)
+    parts[gen_length // 2] = "\nThen the plot of the story begins to thicken:\n"
+    return parts
+
+
+def _no_relevance_head_parts(gen_length):
+    # no_relevance_notail with only its first anchor, at the start of the response.
+    return {0: _no_relevance_notail_parts(gen_length)[0]}
+
+
 def _no_relevance_code_parts(gen_length):
     # Same manipulation with a code structure instead of a narrative one.
     return {
@@ -69,13 +81,72 @@ def _neutral_parts(gen_length):
     }
 
 
+def _two_anchor(first, second):
+    # notail layout: an anchor at the start and one at L/4, nothing where the answer goes.
+    return lambda gen_length: {0: first, gen_length // 4: second}
+
+
+# Irrelevant / absurd negatives in the notail layout, one per hypothesis: other content
+# (recipe), broken language (gibberish), dLLM failure modes (repeat, blank), and bad
+# answering behaviour on the same task (refusal, lazy).
+_recipe_parts = _two_anchor("Preheat the oven to 350 degrees\n",
+                            "\nNext, whisk the eggs and sugar together:\n")
+_gibberish_parts = _two_anchor("Flibber quantum marmalade zigzag wobble\n",
+                               "\nSnorkel pancake velvet thunder:\n")
+_repeat_parts = _two_anchor("the the the the the the the\n", "\nthe the the the the the:\n")
+_blank_parts = _two_anchor("\n\n\n\n\n\n", "\n\n\n\n\n\n")
+_refusal_parts = _two_anchor("I'm sorry, but I cannot help with that.\n",
+                             "\nAs an AI language model, I am unable to:\n")
+_lazy_parts = _two_anchor("This looks too hard, so I will just guess\n",
+                          "\nSkipping all of the calculations here:\n")
+
+
+# Narrative variants of no_relevance_notail: the same story-structure role with other
+# stories (fairy tale, mystery, sci-fi), and a paraphrase of the original anchors.
+_story_fairy_parts = _two_anchor("Once upon a time, in a faraway kingdom\n",
+                                 "\nThen one stormy night, the princess:\n")
+_story_mystery_parts = _two_anchor("The detective lit a pipe and frowned\n",
+                                   "\nLater that evening at the old manor:\n")
+_story_scifi_parts = _two_anchor("The starship drifted past the red moon\n",
+                                 "\nMeanwhile, aboard the orbiting space station:\n")
+_story_paraphrase_parts = _two_anchor("First, let me describe who the heroes are\n",
+                                      "\nNow let me describe where the tale takes place:\n")
+
+
+# Single-anchor negatives: one sentence at the start of the response, nothing else.
+# head_cast is a close variant of no_relevance_head; the rest reuse the first anchor of
+# the better two-anchor templates.
+HEAD_SENTENCES = {
+    "head_cast": "Let me introduce the cast of this novel\n",
+    "head_paraphrase": "First, let me describe who the heroes are\n",
+    "head_lazy": "This looks too hard, so I will just guess\n",
+    "head_refusal": "I'm sorry, but I cannot help with that.\n",
+    "head_recipe": "Preheat the oven to 350 degrees\n",
+    "head_fairy": "Once upon a time, in a faraway kingdom\n",
+}
+
+
 TEMPLATES = {
     "math_template1": _good_parts,
     "no_relevance": _no_relevance_parts,
     "no_relevance_notail": _no_relevance_notail_parts,
+    "no_relevance_notail3": _no_relevance_notail3_parts,
+    "no_relevance_head": _no_relevance_head_parts,
     "no_relevance_code": _no_relevance_code_parts,
     "no_coherence": _no_coherence_parts,
     "neutral_pinned": _neutral_parts,
+    "recipe": _recipe_parts,
+    "gibberish": _gibberish_parts,
+    "repeat": _repeat_parts,
+    "blank": _blank_parts,
+    "refusal": _refusal_parts,
+    "lazy": _lazy_parts,
+    "story_fairy": _story_fairy_parts,
+    "story_mystery": _story_mystery_parts,
+    "story_scifi": _story_scifi_parts,
+    "story_paraphrase": _story_paraphrase_parts,
+    **{name: (lambda text: lambda gen_length: {0: text})(text)
+       for name, text in HEAD_SENTENCES.items()},
 }
 
 
@@ -126,12 +197,14 @@ def anchor_spans(tokenizer, parts, prompt_len, gen_length, seq_len, device):
 
 
 def build_branches(tokenizer, prompt, gen_length, pos_template, neg_template, device,
-                   mask_id=MASK_ID):
+                   mask_id=MASK_ID, neg_prompt=None):
     """Initial x_pos / x_neg (prompt + masked response + anchors) and their anchor spans.
 
-    Returns (x_pos, x_neg, pos_spans, neg_spans); x_neg and neg_spans are None when
-    neg_template is None. When both branches have anchors they must occupy identical
-    token spans, so the branches differ only in anchor content.
+    Returns (x_pos, x_neg, pos_spans, neg_spans); x_neg and neg_spans are None when both
+    neg_template and neg_prompt are None. neg_prompt (default: prompt) is the negative
+    branch's own prompt, e.g. a noisy instruction; its length may differ from prompt's, so
+    spans are absolute in each branch. When both branches have anchors they must occupy
+    identical response offsets, so the responses differ only in anchor content.
     """
     prompt_len = prompt.shape[1]
     seq_len = prompt_len + gen_length
@@ -143,17 +216,31 @@ def build_branches(tokenizer, prompt, gen_length, pos_template, neg_template, de
     for start, end, ids in pos_spans:
         x_pos[:, start:end] = ids
 
-    if neg_template is None:
+    if neg_template is None and neg_prompt is None:
         return x_pos, None, pos_spans, None
 
+    if neg_prompt is None:
+        neg_prompt = prompt
+    neg_prompt_len = neg_prompt.shape[1]
+    neg_seq_len = neg_prompt_len + gen_length
+    x_neg = torch.full((1, neg_seq_len), mask_id, dtype=torch.long, device=device)
+    x_neg[:, :neg_prompt_len] = neg_prompt
+    x_neg[:, neg_prompt_len:] = x_pos[:, prompt_len:]
+
+    if neg_template is None:
+        # Prompt-only negative: the response carries the positive's anchors, if any.
+        neg_spans = [(s - prompt_len + neg_prompt_len, e - prompt_len + neg_prompt_len, ids)
+                     for s, e, ids in pos_spans]
+        return x_pos, x_neg, pos_spans, neg_spans
+
     neg_spans = anchor_spans(tokenizer, template_parts(neg_template, gen_length),
-                             prompt_len, gen_length, seq_len, device)
+                             neg_prompt_len, gen_length, neg_seq_len, device)
     if pos_spans:
-        if [(s, e) for s, e, _ in pos_spans] != [(s, e) for s, e, _ in neg_spans]:
+        if ([(s - prompt_len, e - prompt_len) for s, e, _ in pos_spans]
+                != [(s - neg_prompt_len, e - neg_prompt_len) for s, e, _ in neg_spans]):
             raise ValueError(f"anchor spans of {pos_template!r} and {neg_template!r} differ; "
                              "negative anchors must be token-length-matched")
 
-    x_neg = x_pos.clone()
     for start, end, ids in neg_spans:
         x_neg[:, start:end] = ids
     return x_pos, x_neg, pos_spans, neg_spans

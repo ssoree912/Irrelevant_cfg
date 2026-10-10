@@ -2,7 +2,7 @@
 # lm-eval run with the single-block, cache-free LLaDA decoder (eval/lm_eval_model.py).
 # Every task is 0-shot and generates 128 tokens: one block, 128 steps, one token per step.
 #
-#   scripts/run_eval.sh <gsm8k|math500|humaneval|mbpp|ti_gsm8k|ti_math500|ti_humaneval> <vanilla|neg_only_norel|neg_only_norel_notail>
+#   scripts/run_eval.sh <gsm8k|math500|humaneval|mbpp|ti_gsm8k|ti_math500|ti_humaneval> <vanilla|neg_*|id_*>
 #
 # ti_* are Template-Infilling's own tasks (gsm8k, hendrycks_math500, humaneval_instruct;
 # eval/tasks_ti) with its answer post-processing (postprocess=ti).
@@ -20,7 +20,8 @@
 #   DECODING    llada (greedy, low_confidence) or dream (Dream's sampler with
 #               DREAM_ALG / DREAM_TEMPERATURE / DREAM_TOP_P, default entropy / 0.2 / 0.95);
 #               default: dream for a Dream checkpoint, llada otherwise
-#   W           CFG guidance scale (default 0.5 for Dream, 1.0 for LLaDA; values other than
+#   W           CFG guidance scale (default 0.5 for Dream, 1.0 for LLaDA; id_* configs use it
+#               as Instructive Decoding's epsilon, default 0.3; values other than
 #               1.0 tag the dir _w<W>)
 #   SHARD       "i/n": decode only every n-th request into the shared generations.jsonl
 #               and skip scoring; run n shards, then once without SHARD to score
@@ -29,8 +30,8 @@
 # same command resumes from there.
 set -euo pipefail
 
-DATASET="${1:?usage: run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|neg_only_norel|neg_only_norel_notail>}"
-CONFIG="${2:?usage: run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|neg_only_norel|neg_only_norel_notail>}"
+DATASET="${1:?usage: run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|neg_*|id_*>}"
+CONFIG="${2:?usage: run_eval.sh <gsm8k|math500|humaneval|mbpp> <vanilla|neg_*|id_*>}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${PY:-python}"
@@ -52,7 +53,7 @@ case "$DATASET" in
   *) echo "unknown dataset: $DATASET" >&2; exit 1 ;;
 esac
 case "$CONFIG" in
-  vanilla|neg_only_norel|neg_only_norel_notail) ;;
+  vanilla|neg_*|id_*) ;;  # the model wrapper validates the name
   *) echo "unknown config: $CONFIG" >&2; exit 1 ;;
 esac
 
@@ -73,6 +74,8 @@ case "$DECODING" in
          DECODE_TAG="_dream_${DREAM_ALG}_t${DREAM_TEMPERATURE}_p${DREAM_TOP_P}" ;;
   *) echo "unknown decoding: $DECODING" >&2; exit 1 ;;
 esac
+# Instructive Decoding configs: W is ID's epsilon in z - W * z~, default 0.3.
+[[ "$CONFIG" == id_* ]] && DEFAULT_W=0.3
 W="${W:-$DEFAULT_W}"
 W_TAG=""
 if [ "$CONFIG" != vanilla ]; then

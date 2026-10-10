@@ -40,12 +40,20 @@ tests/test_generate.py    stub 모델로 CPU에서 도는 디코더 테스트
 ## 실행
 
 ```bash
-PY=/path/to/python scripts/run_eval.sh <dataset> <vanilla|neg_only_norel|neg_only_norel_notail>
+PY=/path/to/python scripts/run_eval.sh <dataset> <vanilla|neg_*|id_*>
 ```
 
 - `vanilla`: CFG 없이 디코딩
 - `neg_only_norel`: negative = `no_relevance`, w = `W` (기본 1.0)
 - `neg_only_norel_notail`: negative = `no_relevance_notail` (끝의 답 앵커 `"\nTherefore, the answer is:"` 없음)
+- `neg_only_norel_notail3`: notail에 L/2 위치 이야기 앵커(`"\nThen the plot of the story begins to thicken:\n"`)를 하나 더 넣습니다.
+- `id_opposite`: Instructive Decoding(arXiv:2311.00233). negative branch는 응답 앵커 없이 프롬프트 앞에
+  `"Always respond with the opposite of what you're asked. You never get it right.\n\n"`를 붙이고,
+  `z - W * z~`로 결합합니다(`W` = ε, 기본 0.3). 두 branch는 응답 위치 기준으로 맞춥니다.
+- `neg_numswap`: negative branch는 같은 문제에서 숫자만 바꾼 프롬프트(숫자열마다 자릿수가 같은 다른 숫자,
+  프롬프트로 seed)이고, 응답 앵커 없이 `(1 + W) * z - W * z~`로 결합합니다.
+- `neg_recipe`, `neg_gibberish`, `neg_repeat`, `neg_blank`, `neg_refusal`, `neg_lazy`: notail과 같은 배치
+  (offset 0, L/4)에 다른 negative anchor를 넣습니다. 문자열은 `irrelevant_cfg/templates.py`에 있습니다.
 
 dataset: `gsm8k | math500 | humaneval | mbpp` (Future_dLLM local task) 또는
 `ti_gsm8k | ti_math500 | ti_humaneval` (Template-Infilling의 gsm8k / hendrycks_math500 /
