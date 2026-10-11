@@ -3,7 +3,8 @@
     Dream-v0-Instruct-7B  entropy, temperature 0.2, top_p 0.95   CFG w = 0.5
     LLaDA-8B-Instruct     low_confidence, temperature 0          CFG w = 1.0
 
-The negative is no_relevance_notail. Datasets: GPQA diamond (0-shot), ARC-C test, PIQA;
+The negative is no_relevance_notail. Datasets: GPQA diamond (0-shot), ARC-C test, PIQA,
+WinoGrande (OpenCompass's winogrande_gen, dev 1267);
 MMLU has its own config (eval_mmlu_notail_0shot.py) that reuses these models.
 
     CONFIG=eval_oc/configs/eval_mc_notail_0shot.py scripts/run_oc_mc.sh
@@ -17,11 +18,12 @@ from opencompass.tasks import OpenICLEvalTask, OpenICLInferTask
 
 with read_base():
     from opencompass.configs.datasets.piqa.piqa_gen import piqa_datasets
+    from opencompass.configs.datasets.winogrande.winogrande_gen import winogrande_datasets
 
     from ..datasets.arc_c.arc_c_gen_test import ARC_c_datasets
     from ..datasets.gpqa.gpqa_gen_0shot import gpqa_datasets
 
-datasets = [*gpqa_datasets, *ARC_c_datasets, *piqa_datasets]
+datasets = [*gpqa_datasets, *ARC_c_datasets, *piqa_datasets, *winogrande_datasets]
 
 _DREAM = "/workspace/dllm/Future_dLLM/model/Dream-v0-Instruct-7B"
 _LLADA = "/workspace/dllm/Future_dLLM/model/LLaDA-8B-Instruct"

@@ -30,8 +30,10 @@ eval/
   tasks/            Future_dLLM의 local task yaml/utils (gsm8k, math500, humaneval, mbpp)
   tasks_ti/         Template-Infilling의 task (ti_gsm8k, ti_math500, ti_humaneval)
   tasks_longbench/  Future_dLLM의 LongBench task 14개 (narrativeqa, samsum 제외) + metrics.py
-eval_oc/            OpenCompass 모델 `DreamCFGOC` + 객관식 config (GPQA / ARC-C / PIQA)
+  d1_eval.py        Countdown / Sudoku: d1의 프롬프트·채점 + LLaDA_cfg의 디코딩
+eval_oc/            OpenCompass 모델 `DreamCFGOC` + 객관식 config (GPQA / ARC-C / PIQA / WinoGrande)
 scripts/run_eval.sh, run_all.sh, run_oc_mc.sh
+scripts/download_extra_data.py  TruthfulQA / Countdown / Sudoku (data/), WinoGrande (OpenCompass data/) 다운로드
 data -> Future_dLLM/data  (로컬 parquet, 심볼릭 링크)
 data_ti/                  ti_* task용 parquet (gitignore, HF에서 받아 SOURCE.json에 revision 기록)
 tests/test_generate.py    stub 모델로 CPU에서 도는 디코더 테스트
@@ -59,6 +61,8 @@ dataset: `gsm8k | math500 | humaneval | mbpp` (Future_dLLM local task) 또는
 `ti_gsm8k | ti_math500 | ti_humaneval` (Template-Infilling의 gsm8k / hendrycks_math500 /
 humaneval_instruct와 프롬프트·채점이 같고, TI의 후처리 `postprocess=ti`를 씁니다) 또는
 `longbench_<task>` (데이터는 `LONGBENCH_DATA`, 기본 `$DATA_DIR/longbench/data`).
+`truthfulqa`(lm-eval `truthfulqa_gen`을 로컬 parquet으로; BLEU / ROUGE-1/2/L의 max·diff·acc) 또는
+`countdown | sudoku`(d1 평가, 아래).
 `MAX_SEQ_LEN`(기본 4096)으로 프롬프트 + 생성 길이를 제한합니다(프롬프트는 왼쪽부터 잘림).
 
 디코딩: 기본값은 모델 종류를 따릅니다. LLaDA는 `DECODING=llada`(low_confidence,
@@ -82,12 +86,13 @@ PY=... MODEL_PATH=... DATA_DIR=... GPUS="0 1 2 3" scripts/run_all.sh
 
 태스크는 Future_dLLM의 local task를 쓰되, 모든 태스크를 0-shot으로 평가합니다(`--num_fewshot 0`, yaml의 `num_fewshot`도 0). chat template은 mbpp에만 적용합니다(`--apply_chat_template`).
 
-OpenCompass 객관식(GPQA diamond 5-shot, ARC-C test, PIQA; Future_dLLM eval_oc와 같은 데이터셋 설정):
+OpenCompass 객관식(GPQA diamond 5-shot, ARC-C test, PIQA; Future_dLLM eval_oc와 같은 데이터셋 설정.
+0-shot config에는 OpenCompass의 `winogrande_gen`(dev 1,267)도 들어 있습니다):
 
 ```bash
 MODEL_PATH=.../Dream-v0-Instruct-7B scripts/run_oc_mc.sh
 # 0-shot, 128 tokens, Dream(w=0.5) / LLaDA(w=1.0) vanilla vs no-tail CFG:
-CONFIG=eval_oc/configs/eval_mc_notail_0shot.py scripts/run_oc_mc.sh     # GPQA / ARC-C / PIQA
+CONFIG=eval_oc/configs/eval_mc_notail_0shot.py scripts/run_oc_mc.sh     # GPQA / ARC-C / PIQA / WinoGrande
 CONFIG=eval_oc/configs/eval_mmlu_notail_0shot.py scripts/run_oc_mc.sh   # MMLU 57 subjects
 ```
 
@@ -95,6 +100,22 @@ CONFIG=eval_oc/configs/eval_mmlu_notail_0shot.py scripts/run_oc_mc.sh   # MMLU 5
 Future_dLLM의 wrapper를 따릅니다(Dream: chat template, 첫 EOS에서 자름 / LLaDA: 템플릿 없음,
 special token 제거, stop word 적용). GPQA / MMLU 0-shot은 원래 config에서 retriever만
 ZeroRetriever로 바꾼 것입니다.
+
+## Countdown / Sudoku (d1 평가, `eval/d1_eval.py`)
+
+lm-eval task가 없어 d1(dllm-reasoning/d1, arXiv:2504.12216)의 `eval/`을 따릅니다: Countdown 256문항
+(`countdown_cd3_test.jsonl` 전체), Sudoku 4x4 256문항(500개 중 d1의 seed 42 subsample), d1의 system prompt +
+chat template + `<reasoning>` prefill, special token을 남긴 디코딩, d1의 `parse_and_get_acc.py` 채점(Countdown:
+정답 식 비율, Sudoku: 빈 칸 중 맞힌 칸 비율; `solved`는 완전히 푼 퍼즐 비율). 디코딩만 이 저장소의
+단일 블록 CFG입니다(d1은 128 토큰을 32 블록 4개, 64 스텝). `run_eval.sh countdown <config>`로 실행하며,
+`SHARD` / `LIMIT` / 이어 돌리기도 같습니다. 결과는 `out/results.json`, `out/samples.jsonl`, d1 형식의
+`out/<task>_generations.json`입니다.
+
+## 데이터 추가
+
+```bash
+python scripts/download_extra_data.py   # $DATA_DIR/eval/{truthfulqa,countdown,sudoku} + $COMPASS_DATA_CACHE/data/winogrande
+```
 
 ## 테스트
 

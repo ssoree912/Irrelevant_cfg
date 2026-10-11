@@ -43,7 +43,11 @@ FAMILY_DEFAULTS = {
 
 # config name -> negative template (None = vanilla decoding); same names as eval/.
 CONFIGS = {"vanilla": None, "neg_only_norel": "no_relevance",
-           "neg_only_norel_notail": "no_relevance_notail"}
+           "neg_only_norel_notail": "no_relevance_notail",
+           "neg_only_norel_head": "no_relevance_head",
+           # single-anchor head variants (irrelevant_cfg.templates.HEAD_SENTENCES)
+           **{f"neg_{name}": name for name in ("head_cast", "head_paraphrase", "head_lazy",
+                                               "head_refusal", "head_recipe", "head_fairy")}}
 
 
 def _convert_base_messages(inputs):

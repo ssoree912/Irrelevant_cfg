@@ -1,4 +1,4 @@
-"""Two items per dataset (GPQA / ARC-C / PIQA / one MMLU subject), all four rows: a wiring check."""
+"""Two items per dataset (GPQA / ARC-C / PIQA / WinoGrande / one MMLU subject), all four rows: a wiring check."""
 from mmengine.config import read_base
 
 with read_base():

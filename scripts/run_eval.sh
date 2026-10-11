@@ -3,9 +3,13 @@
 # Every task is 0-shot and generates 128 tokens: one block, 128 steps, one token per step.
 #
 #   scripts/run_eval.sh <gsm8k|math500|humaneval|mbpp|ti_gsm8k|ti_math500|ti_humaneval> <vanilla|neg_*|id_*>
+#   scripts/run_eval.sh <truthfulqa|countdown|sudoku> <config>
 #
 # ti_* are Template-Infilling's own tasks (gsm8k, hendrycks_math500, humaneval_instruct;
 # eval/tasks_ti) with its answer post-processing (postprocess=ti).
+# truthfulqa is lm-eval's truthfulqa_gen on the local parquet (BLEU / ROUGE vs the true and
+# false reference answers). countdown / sudoku run d1's evaluation (eval/d1_eval.py) instead
+# of lm-eval. ARC-C / PIQA / WinoGrande / GPQA are OpenCompass gen configs (run_oc_mc.sh).
 #
 # Env:
 #   MODEL_PATH  LLaDA-8B-Instruct or Dream-v0-Instruct-7B directory
@@ -50,6 +54,8 @@ case "$DATASET" in
   mbpp)      TASK=local_mbpp; CHAT_ARGS=(--apply_chat_template) ;;
   ti_gsm8k|ti_math500|ti_humaneval) TASK="$DATASET" ;;
   longbench_*) TASK="$DATASET" ;;
+  truthfulqa) TASK=local_truthfulqa_gen ;;
+  countdown|sudoku) TASK="$DATASET" ;;
   *) echo "unknown dataset: $DATASET" >&2; exit 1 ;;
 esac
 case "$CONFIG" in
@@ -63,6 +69,9 @@ if grep -qiE '"model_type": *"dream"' "$MODEL_PATH/config.json" 2>/dev/null; the
 else
   FAMILY=llada; DEFAULT_W=1.0
 fi
+# Dream answers truthfulqa's raw Q/A prompt with EOS only, so it gets its chat template
+# (as Dream does for the multiple-choice tasks).
+[[ "$DATASET" == truthfulqa && "$FAMILY" == dream ]] && CHAT_ARGS=(--apply_chat_template)
 DECODING="${DECODING:-$FAMILY}"
 DECODE_ARGS=""
 DECODE_TAG=""
@@ -127,6 +136,15 @@ LIMIT_ARGS=()
 
 echo "$MODEL_TAG $DATASET config=$CONFIG gen_length=$GEN_LENGTH decoding=$DECODING w=$W samples=${LIMIT:-all} shard=${SHARD:-none} -> $OUT"
 cd "$ROOT"
+if [[ "$DATASET" == countdown || "$DATASET" == sudoku ]]; then
+  "$PY" eval/d1_eval.py \
+    --task "$DATASET" \
+    --model_args "pretrained=$MODEL_PATH,config=$CONFIG,gen_length=$GEN_LENGTH$DECODE_ARGS" \
+    --data_dir "$DATA_DIR" \
+    "${LIMIT_ARGS[@]}" \
+    --output_path "$RUN_OUT"
+  exit 0
+fi
 "$PY" eval/lm_eval_model.py \
   --model LLaDA_cfg \
   --model_args "pretrained=$MODEL_PATH,config=$CONFIG,gen_length=$GEN_LENGTH$DECODE_ARGS" \

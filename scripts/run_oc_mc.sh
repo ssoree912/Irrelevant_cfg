@@ -6,7 +6,7 @@
 # Env:
 #   MODEL_PATH         Dream-v0-Instruct-7B directory
 #   OC_PYTHON          OpenCompass interpreter (default: /workspace/dllm/oc/ocenv/bin/python)
-#   COMPASS_DATA_CACHE root holding data/ARC and data/piqa (default: /workspace/dllm/oc)
+#   COMPASS_DATA_CACHE root holding data/ARC, data/piqa, data/winogrande (default: /workspace/dllm/oc)
 #   CONFIG             OpenCompass config (default: eval_oc/configs/eval_dream_mc_cfg.py)
 # OpenCompass resolves every dataset path, GPQA's ./data/gpqa/ included, under COMPASS_DATA_CACHE.
 set -euo pipefail
